@@ -1,0 +1,147 @@
+---
+title: "Data Science Specialization - Project 8"
+author: "Jakub Vedral"
+date: "23th June 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The goal of this project is to predict the manner in which participants performed Weight Lifting Exercise (http://groupware.les.inf.puc-rio.br/har). Participants in this experiment wore accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. Our task is to build a model which will predict what was the way participants moved (ie. quality of the excercise).
+
+## Analysis
+
+
+At first lets download and load the dataset:
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")
+
+train <- read.csv("pml-training.csv",na.strings = c("NA",""))
+test <- read.csv("pml-testing.csv",na.strings = c("NA",""))
+```
+
+As we can see, the dataset is quite rich in data in terms of rows and possible features.
+
+```{r}
+dim(train)
+```
+
+Now we try to build a model predicting the "classe" variable in the training set. This variable tells us the way of move.
+
+Before we approach to model training let's first explore the dataset a bit using data profiling library "dataQualityR".
+```{r}
+
+library(dataQualityR)
+checkDataQuality(train, out.file.num = "dq_n.csv", out.file.cat = "dq_c.csv")
+```
+This package will automatically show us basic statistic (much like summary function). But what is handy is that it will print it in tabular layout. Two files are created:
+* "dq_n.csV" for numeric data 
+* "dq_c.csV" for categorical data 
+
+Lets load them and look at them 
+
+```{r}
+dq_n <- read.csv("dq_n.csv")
+dq_c <- read.csv("dq_c.csv")
+
+head(dq_n, n= 30)
+head(dq_c, n= 30)
+```
+As we can see there are columns with over 90% of missing values. If we look closely, we will find out that these are aggegations/summaries of previous timestamps. We can try two approaches:
+1) fill in the missing values with the last known value. We will then repeate this value until it "changes".
+2) dont use those columns in our prediction model
+
+I prefer second option, becouse aggregations/summaries will tend to be highly correlated with the original non-aggregated columns.
+
+Also it would be reasonable to remove timestamp columns (given that we dont change order) and user_name as it can hardly contribute to predictions of current move.
+
+```{r}
+train_adj <- train[ , colSums(is.na(train)) == 0]
+train_adj <- train_adj[ , -c(1:5)]
+```
+
+Now lets check correlations among columns. It is good practice to remove highly correlated columns as they add little value to model.
+(we exclude factor variablesfrom the analysis and "classe" column- as it is predicted value)
+
+```{r}
+library(corrgram)
+corrgram(train_adj)
+```
+
+We can see that there are some (evne strong) correlations, but there is no columns highly correlated to all other columns. I think we can use all of them in our prediction.
+
+
+Lets do it.
+
+```{r}
+library(caret)
+library(lubridate)
+set.seed(154)
+train_control<- trainControl(method="cv", number=20)
+train_control2<- trainControl(method="cv", number=10)
+train_control3<- trainControl(method="cv", number=5)
+train_control4<- trainControl(method="cv", number=2)
+
+modFit1_start_ts <- now()
+modFit1 <- train(classe ~ . , method ="rpart",data= train_adj , trControl=train_control)
+modFit1_end_ts <-now()
+modFit1_duration <- modFit1_end_ts - modFit1_start_ts
+
+modFit2_start_ts <- now()
+modFit2 <- train(classe ~ . , method ="kknn",data= train_adj , trControl=train_control, k = 5)
+modFit2_end_ts <- now()
+modFit2_duration <- modFit2_end_ts - modFit2_start_ts
+
+modFit3_start_ts <- now()
+modFit3 <- train(classe ~ . , method ="kknn",data= train_adj , trControl=train_control2, k = 5)
+modFit3_end_ts <- now()
+modFit3_duration <- modFit3_end_ts - modFit3_start_ts
+
+modFit4_start_ts <- now()
+modFit4 <- train(classe ~ . , method ="kknn",data= train_adj , trControl=train_control3, k = 5)
+modFit4_end_ts <- now()
+modFit4_duration <- modFit4_end_ts - modFit4_start_ts
+
+modFit5_start_ts <- now()
+modFit5 <- train(classe ~ . , method ="kknn",data= train_adj , trControl=train_control4 , k = 5)
+modFit5_end_ts <- now()
+modFit5_duration <- modFit5_end_ts - modFit5_start_ts
+
+modFit1
+
+```
+
+At first I tried prediction with classification tree, but the accuracy was low only 53% and the tree did not classify to all the possible outcomes (missing "D"classe in prediction), though it took a little time to train (13 seconds). I chose 20-fold cross valiation. This number should have brought reasonable reduction of variance without much increasing the bias. In the end it did not matter, becouse of the low accuracy.
+
+```{r}
+modFit1$finalModel
+```
+
+As a second choice I tried K-means clustering model (with same cross validation setting).
+Model turned out to be quite precise (over 98%). It was clearly performance demanding as it took 12 minutes to complete. Then I treid lowering the cross-validation settings to 10, 5 and 2. Results are below.
+
+```{r}
+results<- data.frame( accuracy= c(
+  modFit2$results$Accuracy[1],
+  modFit3$results$Accuracy[1],
+  modFit4$results$Accuracy[1],
+  modFit5$results$Accuracy[1]),
+  duration = c(modFit2_duration,
+               modFit3_duration,
+               modFit4_duration,
+               modFit5_duration)
+  )
+results
+```
+As we can see the accuracy of all K-mean clustering models are very simmilar but complexity (in term of time needed to train) is much lower. Therefore I chose last model as best for prediction.
+
+```{r}
+predict(modFit5,test)
+```
+
+Predicted numbers were successfully confirmed in Coursera quiz test.
